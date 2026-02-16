@@ -119,7 +119,7 @@ python caption_prediction/submission_check.py \
 python concept_detection/submission_check.py \
   --submission /path/to/submission.csv \
   --dataset valid \
-  --primary-gt concept_detection/data/valid/concepts.csv \
+  --primary-gt concept_detection/data/valid/concepts.csv
 ```
 
 Arguments:

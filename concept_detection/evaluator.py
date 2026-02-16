@@ -188,7 +188,7 @@ class ConceptEvaluator:
                 # Increase calculated score
                 current_score += f1score
 
-        return current_score / max_score
+        return current_score / max_score if max_score > 0 else 0.0
 
     def compute_secondary_score(self, predictions):
         """
@@ -251,7 +251,7 @@ class ConceptEvaluator:
                 # Increase calculated score
                 current_score += f1score
 
-        return current_score / max_score
+        return current_score / max_score if max_score > 0 else 0.0
 
         # PUT AUXILIARY METHODS BELOW
         # ...

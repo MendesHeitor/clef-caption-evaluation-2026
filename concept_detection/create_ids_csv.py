@@ -57,10 +57,16 @@ def main():
         action="store_true",
         help="Process both data/valid and data/test datasets",
     )
+    parser.add_argument(
+        "--data-dir",
+        default="data",
+        help="Data directory name relative to this script (default: data)",
+    )
 
     args = parser.parse_args()
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, args.data_dir)
 
     if args.input:
         if not args.output:
@@ -70,8 +76,8 @@ def main():
         # Process both valid and test datasets
         datasets = ["valid", "test"]
         for dataset in datasets:
-            concepts_path = os.path.join(base_dir, "data", dataset, "concepts.csv")
-            ids_path = os.path.join(base_dir, "data", dataset, "ids.csv")
+            concepts_path = os.path.join(data_dir, dataset, "concepts.csv")
+            ids_path = os.path.join(data_dir, dataset, "ids.csv")
 
             if os.path.exists(concepts_path):
                 create_ids_csv(concepts_path, ids_path)
@@ -81,8 +87,8 @@ def main():
         # Default: process both if they exist
         datasets = ["valid", "test"]
         for dataset in datasets:
-            concepts_path = os.path.join(base_dir, "data", dataset, "concepts.csv")
-            ids_path = os.path.join(base_dir, "data", dataset, "ids.csv")
+            concepts_path = os.path.join(data_dir, dataset, "concepts.csv")
+            ids_path = os.path.join(data_dir, dataset, "ids.csv")
 
             if os.path.exists(concepts_path):
                 create_ids_csv(concepts_path, ids_path)
