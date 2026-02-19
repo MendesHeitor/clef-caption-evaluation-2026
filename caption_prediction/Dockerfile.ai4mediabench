@@ -1,0 +1,81 @@
+FROM nvidia/cuda:12.6.1-cudnn-runtime-ubuntu22.04
+
+ENV TOKENIZERS_PARALLELISM=false
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    unzip \
+    git-lfs \
+    python3 \
+    python3-pip \
+    python3-venv \
+    pkg-config \
+    libfreetype6-dev \
+    libpng-dev \
+    && git lfs install \
+    && rm -rf /var/lib/apt/lists/*
+
+# MedImageInsights venv
+RUN git clone https://huggingface.co/lion-ai/MedImageInsights && \
+    chmod -R 755 /app/MedImageInsights
+
+RUN python3 -m venv /venv/medimageinsights && \
+    /venv/medimageinsights/bin/pip install --upgrade pip && \
+    /venv/medimageinsights/bin/pip install "numpy<2" && \
+    cd /app/MedImageInsights && \
+    /venv/medimageinsights/bin/pip install -r requirements.txt
+
+RUN /venv/medimageinsights/bin/python -c \
+    "import sys; sys.path.insert(0, '/app/MedImageInsights'); \
+    from medimageinsightmodel import MedImageInsight; \
+    print('MedImageInsights venv OK')"
+
+# AlignScore venv
+RUN git clone https://github.com/yuh-zha/AlignScore.git /app/AlignScore
+
+RUN python3 -m venv /venv/alignscore && \
+    /venv/alignscore/bin/pip install --upgrade pip && \
+    cd /app/AlignScore && /venv/alignscore/bin/pip install . && \
+    /venv/alignscore/bin/pip install "transformers==4.20.1" && \
+    /venv/alignscore/bin/python -c "import torch, transformers; print('AlignScore deps OK:', 'torch='+torch.__version__, 'transformers='+transformers.__version__)" && \
+    cd /app 
+
+RUN /venv/alignscore/bin/python -m spacy download en_core_web_sm && \
+    mkdir -p /app/models/AlignScore && \
+    cd /app/models/AlignScore && \
+    git clone https://huggingface.co/yzha/AlignScore . && \
+    cd /app
+
+RUN /venv/alignscore/bin/python -c \
+    "from alignscore import AlignScore; print('AlignScore venv OK')"
+
+# Main venv (BERTScore, ROUGE, MedCAT, BLEURT, etc.)
+COPY requirements.txt /app/requirements.txt
+
+RUN python3 -m venv /venv/main && \
+    /venv/main/bin/pip install --upgrade pip && \
+    /venv/main/bin/pip install -r /app/requirements.txt && \
+    /venv/main/bin/python -c "import nltk; nltk.download('punkt_tab'); nltk.download('punkt')"
+
+RUN /venv/main/bin/python -c "import evaluate, bert_score, medcat, bleurt_pytorch; print('Main venv OK')"
+
+RUN /venv/main/bin/python -c "from bleurt_pytorch import BleurtTokenizer; BleurtTokenizer.from_pretrained('lucadiliello/BLEURT-20-D12'); print('BLEURT tokenizer OK')"
+
+# Each venv runs in its own subprocess
+ENV PATH="/venv/main/bin:$PATH"
+
+# Directories for AI4MediaBench
+RUN mkdir -p /app/program /app/input /app/output && chmod -R 755 /app
+
+# scoring_program.zip is extracted to /app/program/ by AI4MediaBench
+# Must contain: evaluator.py, run_alignscore.py, run_medimageinsights.py,
+#               medcat_scorer.py, run_evaluation.py, submission_check.py,
+#               models/MedCAT/*.zip, precomputed/*.npz
+# Command is defined in metadata.yaml: python3 run_evaluation.py valid
