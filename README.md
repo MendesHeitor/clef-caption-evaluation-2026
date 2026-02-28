@@ -20,7 +20,7 @@ You need docker to run the evaluations with GPU support for caption prediction e
 
 1. Copy `captions.csv` and `images` dir into `caption_prediction/data/valid`.
    
-2. Request a licence for UMLS and then download the UMLS full model (zip file) from https://uts.nlm.nih.gov/uts/login?service=https://medcat.rosalind.kcl.ac.uk/auth-callback into `caption_prediction/models/MedCAT`.
+2. Request a licence for UMLS and then download the UMLS full model (zip file) from https://medcat.sites.er.kcl.ac.uk/auth-callback-api into `caption_prediction/models/MedCAT`.
    
 3. Choose device (GPU) or use `--gpus all`, precompute the image embeddings once, and build the `caption_prediction_evaluator` docker image. This may take a while.
 
