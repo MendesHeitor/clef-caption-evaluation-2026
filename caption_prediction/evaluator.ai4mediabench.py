@@ -33,19 +33,45 @@ MEDIMAGEINSIGHTS_MODEL_DIR = os.path.join(current_dir, "MedImageInsights/2024.09
 if not os.path.exists(MEDIMAGEINSIGHTS_MODEL_DIR):
     MEDIMAGEINSIGHTS_MODEL_DIR = "/app/MedImageInsights/2024.09.27"
 
-# Path to the subprocess runner scripts
-ALIGNSCORE_RUNNER = os.path.join(current_dir, "run_alignscore.py")
-MEDIMAGEINSIGHTS_RUNNER = os.path.join(current_dir, "run_medimageinsights.py")
+# Path to the subprocess runner scripts (named *.ai4mediabench.py in the repo,
+# renamed when packed into scoring_program.zip)
+def _runner(name):
+    path = os.path.join(current_dir, f"{name}.py")
+    return path if os.path.exists(path) else os.path.join(current_dir, f"{name}.ai4mediabench.py")
+
+
+ALIGNSCORE_RUNNER = _runner("run_alignscore")
+MEDIMAGEINSIGHTS_RUNNER = _runner("run_medimageinsights")
 
 
 class CaptionEvaluator:
     case_sensitive = False
 
-    def __init__(self, ground_truth_path="/app/data/valid/captions.csv", dataset_type="valid"):
+    def __init__(
+        self,
+        ground_truth_path="/app/data/valid/captions.csv",
+        dataset_type="valid",
+        gt=None,
+        embeddings_path=None,
+        medcat_zip=None,
+        alignscore_python=ALIGNSCORE_PYTHON,
+        alignscore_ckpt=ALIGNSCORE_CKPT,
+        medimageinsights_python=MEDIMAGEINSIGHTS_PYTHON,
+        medimageinsights_model_dir=MEDIMAGEINSIGHTS_MODEL_DIR,
+    ):
+        """gt ({ID: caption}) and the path arguments let a local run (see config.py)
+        replace the Docker layout; the defaults keep the AI4MediaBench behaviour."""
         print("Initializing evaluator...")
         self.ground_truth_path = ground_truth_path
         self.dataset_type = dataset_type
-        self.gt = self.load_gt()
+        self.gt = gt if gt is not None else self.load_gt()
+        self.embeddings_path = embeddings_path or os.path.join(
+            current_dir, "precomputed", f"image_embeddings_{dataset_type}.npz"
+        )
+        self.alignscore_python = alignscore_python
+        self.alignscore_ckpt = alignscore_ckpt
+        self.medimageinsights_python = medimageinsights_python
+        self.medimageinsights_model_dir = medimageinsights_model_dir
         if torch.cuda.is_available():
             self.device = "cuda"
         else:
@@ -57,7 +83,8 @@ class CaptionEvaluator:
         }
         print("Loading MedCatScorer")
         self.medcat_scorer = MedCatScorer(
-            model_path=os.path.join(
+            model_path=medcat_zip
+            or os.path.join(
                 current_dir,
                 [
                     os.path.join("models/MedCAT", filename)
@@ -262,15 +289,17 @@ class CaptionEvaluator:
         payload = json.dumps({
             "contexts": contexts,
             "claims": claims,
-            "ckpt_path": ALIGNSCORE_CKPT,
+            "ckpt_path": self.alignscore_ckpt,
             "device": self.device,
         })
 
         result = subprocess.run(
-            [ALIGNSCORE_PYTHON, ALIGNSCORE_RUNNER],
+            [self.alignscore_python, ALIGNSCORE_RUNNER],
             input=payload,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0:
             raise RuntimeError(f"AlignScore subprocess failed:\n{result.stderr}")
@@ -297,9 +326,7 @@ class CaptionEvaluator:
     def _ensure_image_embeddings(self):
         if self._image_embeddings is not None:
             return
-        cache_path = os.path.join(
-            current_dir, "precomputed", f"image_embeddings_{self.dataset_type}.npz"
-        )
+        cache_path = self.embeddings_path
         if not os.path.exists(cache_path):
             raise Exception(
                 f"Precomputed image embeddings not found at {cache_path}. Rebuild the image to generate them."
@@ -311,15 +338,17 @@ class CaptionEvaluator:
         print("Encoding captions via MedImageInsights subprocess")
         payload = json.dumps({
             "texts": texts,
-            "model_dir": MEDIMAGEINSIGHTS_MODEL_DIR,
+            "model_dir": self.medimageinsights_model_dir,
             "batch_size": max(1, self.text_batch_size),
         })
 
         result = subprocess.run(
-            [MEDIMAGEINSIGHTS_PYTHON, MEDIMAGEINSIGHTS_RUNNER],
+            [self.medimageinsights_python, MEDIMAGEINSIGHTS_RUNNER],
             input=payload,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0:
             raise RuntimeError(f"MedImageInsights subprocess failed:\n{result.stderr}")

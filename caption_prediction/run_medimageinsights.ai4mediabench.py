@@ -18,7 +18,8 @@ def main():
     model_dir = payload["model_dir"]
 
     with contextlib.redirect_stdout(sys.stderr):
-        sys.path.insert(0, "/app/MedImageInsights")
+        # model_dir is <MedImageInsights repo>/2024.09.27
+        sys.path.insert(0, os.path.dirname(os.path.normpath(model_dir)))
         from medimageinsightmodel import MedImageInsight
 
     import torch

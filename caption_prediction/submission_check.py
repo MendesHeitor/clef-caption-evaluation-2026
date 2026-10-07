@@ -39,8 +39,12 @@ def _load_ground_truth_ids(ground_truth_path: str) -> list:
 
 
 def check_submission(
-    submission_path: str, ground_truth_path: str, dataset_type: str
+    submission_path: str,
+    ground_truth_path: str,
+    dataset_type: str,
+    ground_truth_ids: list = None,
 ) -> None:
+    """ground_truth_ids (ordered) replaces reading IDs from ground_truth_path."""
     if not os.path.exists(submission_path):
         raise SubmissionFormatError(f"Submission file not found at {submission_path}.")
 
@@ -68,7 +72,11 @@ def check_submission(
                 )
 
             seen_ids = set()
-            gt_ids_list = _load_ground_truth_ids(ground_truth_path)
+            gt_ids_list = (
+                list(ground_truth_ids)
+                if ground_truth_ids is not None
+                else _load_ground_truth_ids(ground_truth_path)
+            )
             gt_ids = set(gt_ids_list)
             missing_in_submission = set(gt_ids)
 

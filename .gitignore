@@ -16,3 +16,5 @@ caption_prediction/__pycache__
 concept_detection/*.csv
 caption_prediction/*.csv
 submissions
+.env
+.venvs

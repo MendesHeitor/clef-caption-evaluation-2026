@@ -12,6 +12,95 @@ This repository provides tools to validate and evaluate your submissions for the
 
 You can use these scripts to check your submission format and run local evaluations before submitting to the AI4MediaBench platform. Passing the pre-check is required for a valid submission.
 
+## Native setup (no Docker)
+
+Caption evaluation runs natively with [uv](https://docs.astral.sh/uv/), without Docker or root access. It mirrors `Dockerfile.ai4mediabench`: three venvs (`main`, `alignscore`, `medimageinsights`), because their pinned dependencies conflict. Exact versions live in `caption_prediction/locks/`, so every machine gets the same environment that was tested.
+
+### Requirements
+
+- Linux with an NVIDIA GPU (tested: RTX 3060 6 GB). torch 2.1.2 / CUDA 12.1 and torch 1.13.1 / CUDA 11.7 cover GPUs up to the A100 and RTX 30xx generation, but **not Blackwell** (RTX 50xx, B200).
+- `uv`, `git`, `python3` (any version, only used to read the config; uv downloads Python 3.10 itself), and internet access **during setup only**.
+- Disk: ~10 GB for the venvs (keep them on a local Linux filesystem) and ~25 GB for artifacts (models + caches).
+- Memory: **~24 GB RAM (+ swap)**. The UMLS MedCAT pack takes ~14 GB and stays loaded for the whole run, while each GPU scorer subprocess adds a few GB on top. On a cluster, request at least 32 GB for the job. On a 16 GB machine, add ~16 GB of swap and close other applications.
+- The datasets: a folder holding `dev_caption/` (`standard`) and `dev_caption_synth/` (`synth`), each with `captions.csv` and `images/`.
+- The UMLS MedCAT model pack `umls_self_train_model_pt2ch_3760d588371755d0.zip`. It's licensed and can't be downloaded by the setup; copy your own (see step 2 of the Docker instructions below).
+
+### 1. Install
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh    # if uv is missing
+git clone -b setup/native-uv git@github.com:MendesHeitor/clef-caption-evaluation-2026.git
+cd clef-caption-evaluation-2026
+```
+
+### 2. Configure
+
+```sh
+cp .env.example .env
+```
+
+Edit `.env`:
+
+| Variable | Meaning |
+|---|---|
+| `CLEF_DATASETS_DIR` | folder holding `dev_caption/` and `dev_caption_synth/` |
+| `CLEF_ARTIFACTS_DIR` | where models, caches and embeddings go (created if missing; needs ~25 GB) |
+| `CLEF_VENVS_DIR` | optional, default `<repo>/.venvs` |
+
+`~` and `*` are expanded, and each pattern must match exactly one path. A mount point whose name changes between boots can be written as `/media/<user>/*/...`. The values in `.env.example` are examples from one machine; replace them.
+
+Then copy the MedCAT pack:
+
+```sh
+mkdir -p <CLEF_ARTIFACTS_DIR>/MedCAT && cp umls_self_train_model_pt2ch_3760d588371755d0.zip <CLEF_ARTIFACTS_DIR>/MedCAT/
+```
+
+### 3. Set up the environment
+
+```sh
+caption_prediction/setup.sh
+```
+
+This creates the three venvs from `caption_prediction/locks/` and downloads the model weights at pinned revisions (MedImageInsights, AlignScore). It also prefetches every model the scorers would otherwise download at runtime (DeBERTa-xlarge-mnli, BLEURT-20-D12, roberta, the ROUGE metric, NLTK punkt). Afterwards, evaluation works **offline**: on compute nodes without internet, set `HF_HUB_OFFLINE=1`. It's safe to re-run.
+
+### 4. Evaluate
+
+Prepare a CSV with columns `ID,Caption` (see the format rules under *Caption Prediction Evaluation* below). It must contain every valid ID of the dataset in the order of its `captions.csv`. Then run:
+
+```sh
+.venvs/main/bin/python caption_prediction/run_evaluation.py --dataset standard --submission my_captions.csv --output my_scores.json
+.venvs/main/bin/python caption_prediction/run_evaluation.py --dataset synth    --submission my_synth_captions.csv
+```
+
+- The ground truth is the dataset's official valid rows (IDs containing `_valid_`), read from its `captions.csv` in memory: 19,240 IDs for `standard`, 19,239 for `synth`.
+- `--gt file.csv` replaces the ground truth with any `ID,Caption` file, for example a few rows for a quick pipeline test.
+- The format check runs first and stops on errors before any model loads.
+- Image embeddings are cached per dataset in `<CLEF_ARTIFACTS_DIR>/precomputed/image_embeddings_<dataset>.npz`. Only missing IDs get encoded, so the first full run spends extra time on that step.
+- `score` is relevance (mean of BERTScore, ROUGE, similarity, BLEURT). `score_secondary` is factuality (mean of MedCAT, AlignScore).
+
+Quick pipeline test with a 5-row ground truth (`submissions/` is gitignored):
+
+```sh
+mkdir -p submissions
+.venvs/main/bin/python - <<'PY'
+import csv, sys; sys.path.insert(0, "caption_prediction"); import config
+gt = list(config.ground_truth("standard").items())[:5]
+for name, rows in [("gt_5", gt), ("fake_5", [(i, "Chest X-ray, no abnormality.") for i, _ in gt])]:
+    with open(f"submissions/{name}.csv", "w", newline="") as f:
+        w = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator="\n"); w.writerow(["ID", "Caption"]); w.writerows(rows)
+PY
+.venvs/main/bin/python caption_prediction/run_evaluation.py --dataset standard --gt submissions/gt_5.csv --submission submissions/fake_5.csv
+```
+
+Expect about 10 minutes on a laptop GPU, most of it loading MedCAT. Passing the ground truth itself as `--submission` should give ~1.0 for every metric.
+
+### Troubleshooting
+
+- `Killed` / exit 137 (while loading MedCatScorer or during a later scorer): not enough RAM. Add swap or request more memory.
+- `Nothing found at '...'. Is the partition mounted?`: a path in `.env` doesn't resolve.
+- `no kernel image is available for execution on the device`: the GPU is newer than the pinned torch builds support (see Requirements).
+- Upgrading packages: see the comment at the top of `caption_prediction/setup.sh` for how the locks were produced and the known version traps.
+
 ## Setup
 
 You need docker to run the evaluations with GPU support for caption prediction evaluation. Please refer to the last section of this README to see submission format instructions and run submission checks locally (see below).
