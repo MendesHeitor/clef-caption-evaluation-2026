@@ -21,7 +21,7 @@ Caption evaluation runs natively with [uv](https://docs.astral.sh/uv/), without 
 - Linux with an NVIDIA GPU (tested: RTX 3060 6 GB). torch 2.1.2 / CUDA 12.1 and torch 1.13.1 / CUDA 11.7 cover GPUs up to the A100 and RTX 30xx generation, but **not Blackwell** (RTX 50xx, B200).
 - `uv`, `git`, `python3` (any version, only used to read the config; uv downloads Python 3.10 itself), and internet access **during setup only**.
 - Disk: ~10 GB for the venvs (keep them on a local Linux filesystem) and ~25 GB for artifacts (models + caches).
-- Memory: **~24 GB RAM (+ swap)**. The UMLS MedCAT pack takes ~14 GB and stays loaded for the whole run, while each GPU scorer subprocess adds a few GB on top. On a cluster, request at least 32 GB for the job. On a 16 GB machine, add ~16 GB of swap and close other applications.
+- Memory: **~16 GB RAM + swap**. The UMLS MedCAT pack takes ~14 GB, loaded last after the GPU scorers are freed. On a cluster, request at least 24 GB for the job. On a 16 GB machine, add ~16 GB of swap.
 - The datasets: a folder holding `dev_caption/` (`standard`) and `dev_caption_synth/` (`synth`), each with `captions.csv` and `images/`.
 - The UMLS MedCAT model pack `umls_self_train_model_pt2ch_3760d588371755d0.zip`. It's licensed and can't be downloaded by the setup; copy your own (see step 2 of the Docker instructions below).
 
@@ -78,6 +78,8 @@ Prepare a CSV with columns `ID,Caption` (see the format rules under *Caption Pre
 - Image embeddings are cached per dataset in `<CLEF_ARTIFACTS_DIR>/precomputed/image_embeddings_<dataset>.npz`. Only missing IDs get encoded, so the first full run spends extra time on that step.
 - `score` is relevance (mean of BERTScore, ROUGE, similarity, BLEURT). `score_secondary` is factuality (mean of MedCAT, AlignScore).
 
+**On every new machine, run this quick test before a full evaluation.** It exercises every stage, MedCAT included, in minutes. MedCAT is loaded last, after the GPU scorers have been freed, to keep peak memory down; at start-up only its pack is checked, so a MedCAT loading problem would otherwise appear only at the end of a long run.
+
 Quick pipeline test with a 5-row ground truth (`submissions/` is gitignored):
 
 ```sh
@@ -92,11 +94,11 @@ PY
 .venvs/main/bin/python caption_prediction/run_evaluation.py --dataset standard --gt submissions/gt_5.csv --submission submissions/fake_5.csv
 ```
 
-Expect about 10 minutes on a laptop GPU, most of it loading MedCAT. Passing the ground truth itself as `--submission` should give ~1.0 for every metric.
+Expect 10–20 minutes on a 16 GB laptop, most of it loading MedCAT (less with enough RAM to avoid swap). Passing the ground truth itself as `--submission` should give ~1.0 for every metric.
 
 ### Troubleshooting
 
-- `Killed` / exit 137 (while loading MedCatScorer or during a later scorer): not enough RAM. Add swap or request more memory.
+- `Killed` / exit 137: not enough RAM (MedCAT needs ~14 GB when it loads, at the end of the run). Add swap or request more memory.
 - `Nothing found at '...'. Is the partition mounted?`: a path in `.env` doesn't resolve.
 - `no kernel image is available for execution on the device`: the GPU is newer than the pinned torch builds support (see Requirements).
 - Upgrading packages: see the comment at the top of `caption_prediction/setup.sh` for how the locks were produced and the known version traps.

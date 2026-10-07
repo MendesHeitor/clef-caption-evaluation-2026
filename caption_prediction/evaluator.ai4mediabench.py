@@ -6,6 +6,7 @@ import string
 import subprocess
 import numpy as np
 import re
+import zipfile
 import evaluate
 from tqdm import tqdm
 from bert_score import BERTScorer
@@ -81,18 +82,18 @@ class CaptionEvaluator:
         self.scorers = {
             "rouge": (evaluate.load("rouge"),),
         }
-        print("Loading MedCatScorer")
-        self.medcat_scorer = MedCatScorer(
-            model_path=medcat_zip
-            or os.path.join(
-                current_dir,
-                [
-                    os.path.join("models/MedCAT", filename)
-                    for filename in os.listdir("models/MedCAT")
-                    if filename.endswith(".zip")
-                ][0],
-            )
+        self.medcat_model_path = medcat_zip or os.path.join(
+            current_dir,
+            [
+                os.path.join("models/MedCAT", filename)
+                for filename in os.listdir("models/MedCAT")
+                if filename.endswith(".zip")
+            ][0],
         )
+        self._check_medcat_pack()
+        # Loaded in compute_medcats, after the GPU scorers are freed: the UMLS
+        # pack takes ~14 GB RAM and would otherwise be held through every metric.
+        self.medcat_scorer = None
         self.bert_scorer = None
         self.bleurt_model = None
         self.bleurt_tokenizer = None
@@ -310,8 +311,21 @@ class CaptionEvaluator:
 
         return np.mean(scores)
 
+    def _check_medcat_pack(self):
+        # Cheap early failure (missing/corrupt pack) without loading the model
+        path = self.medcat_model_path
+        if not zipfile.is_zipfile(path):
+            raise Exception(f"MedCAT model pack missing or not a valid zip: {path}")
+        names = set(zipfile.ZipFile(path).namelist())
+        missing = {"cdb.dat", "vocab.dat"} - names
+        if missing:
+            raise Exception(f"MedCAT model pack {path} lacks {sorted(missing)}")
+
     def compute_medcats(self, candidate_pairs):
         print("Computing MEDCATS")
+        if self.medcat_scorer is None:
+            print("Loading MedCatScorer")
+            self.medcat_scorer = MedCatScorer(model_path=self.medcat_model_path)
         medcat_scores = []
         for image_key in candidate_pairs:
             if len(self.gt[image_key]) != 0 or len(candidate_pairs[image_key]) != 0:
