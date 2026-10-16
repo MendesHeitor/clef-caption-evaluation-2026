@@ -19,11 +19,20 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(CURRENT_DIR)
 ENV_FILE = os.path.join(REPO_ROOT, ".env")
 
-# Dataset name -> directory under CLEF_DATASETS_DIR (holds captions.csv + images/)
+# ImageCLEF dataset name -> directory under CLEF_DATASETS_DIR (holds captions.csv + images/)
 DATASETS = {
     "standard": "dev_caption",
     "synth": "dev_caption_synth",
 }
+
+# ROCOv2 lives in its own folder (CLEF_ROCOV2_DIR), unpacked from Hugging Face as
+# <dir>/validation/<ID>.<ext> + <dir>/validation/validation_metadata.csv (image_id,caption,cui)
+ROCOV2 = "rocov2"
+ROCOV2_SPLIT = "validation"
+ROCOV2_METADATA = "validation_metadata.csv"
+DATASET_CHOICES = sorted([*DATASETS, ROCOV2])
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 
 
 class ConfigError(Exception):
@@ -92,27 +101,73 @@ def venvs_dir():
     return os.path.expanduser(get("CLEF_VENVS_DIR", os.path.join(REPO_ROOT, ".venvs")))
 
 
+def rocov2_dir():
+    """The unpacked ROCOv2 folder. Required, but it may be empty: it's created
+    if missing and run_evaluation downloads + unpacks into it."""
+    value = get("CLEF_ROCOV2_DIR")
+    if not value:
+        raise ConfigError(
+            "CLEF_ROCOV2_DIR is not set. Add it to .env (see .env.example) even if "
+            "the folder is empty: ROCOv2 is downloaded and unpacked into it."
+        )
+    return resolve(value, create=True)
+
+
+def rocov2_metadata():
+    return os.path.join(rocov2_dir(), ROCOV2_SPLIT, ROCOV2_METADATA)
+
+
 def dataset_dir(name):
+    if name == ROCOV2:
+        return rocov2_dir()
     if name not in DATASETS:
-        raise ConfigError(f"Unknown dataset '{name}'. Choose from: {', '.join(DATASETS)}")
+        raise ConfigError(f"Unknown dataset '{name}'. Choose from: {', '.join(DATASET_CHOICES)}")
     return os.path.join(datasets_dir(), DATASETS[name])
+
+
+def image_dir(name):
+    if name == ROCOV2:
+        return os.path.join(rocov2_dir(), ROCOV2_SPLIT)
+    return os.path.join(dataset_dir(name), "images")
+
+
+def image_index(directory):
+    """{ID: path} for every image file in directory, whatever its extension."""
+    index = {}
+    for entry in os.scandir(directory):
+        stem, ext = os.path.splitext(entry.name)
+        if not entry.is_file() or ext.lower() not in IMAGE_EXTENSIONS:
+            continue
+        if stem in index:
+            raise ConfigError(
+                f"Image '{stem}' exists with two extensions in {directory}: "
+                f"{os.path.basename(index[stem])}, {entry.name}"
+            )
+        index[stem] = entry.path
+    return index
 
 
 def ground_truth(dataset, gt_path=None):
     """Ordered {ID: caption} to evaluate against.
 
-    Default: the official valid rows ('_valid_' in the ID) of the dataset's
-    captions.csv, which mixes train and valid. gt_path overrides it with any
+    Default for ImageCLEF: the official valid rows ('_valid_' in the ID) of the
+    dataset's captions.csv, which mixes train and valid. For ROCOv2: every row
+    of validation_metadata.csv. gt_path overrides either with any
     captions.csv-shaped file (e.g. a cropped GT for quick runs).
     """
-    path = gt_path or os.path.join(dataset_dir(dataset), "captions.csv")
-    gt = {}
-    with open(path, encoding="utf-8", newline="") as f:
-        reader = csv.reader(f)
-        next(reader)  # header
-        for row in reader:
-            if row and (gt_path or "_valid_" in row[0]):
-                gt[row[0]] = row[1]
+    if dataset == ROCOV2 and not gt_path:
+        path = rocov2_metadata()
+        with open(path, encoding="utf-8", newline="") as f:
+            gt = {row["image_id"]: row["caption"] for row in csv.DictReader(f)}
+    else:
+        path = gt_path or os.path.join(dataset_dir(dataset), "captions.csv")
+        gt = {}
+        with open(path, encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            next(reader)  # header
+            for row in reader:
+                if row and (gt_path or "_valid_" in row[0]):
+                    gt[row[0]] = row[1]
     if not gt:
         raise ConfigError(f"No ground-truth rows found in {path}")
     return gt

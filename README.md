@@ -45,6 +45,7 @@ Edit `.env`:
 |---|---|
 | `CLEF_DATASETS_DIR` | folder holding `dev_caption/` and `dev_caption_synth/` |
 | `CLEF_ARTIFACTS_DIR` | where models, caches and embeddings go (created if missing; needs ~25 GB) |
+| `CLEF_ROCOV2_DIR` | required for `--dataset rocov2`: the unpacked ROCOv2 folder. Set it **before the first run, even if the folder is empty or doesn't exist yet** (its parent must exist); the data is downloaded and unpacked into it. |
 | `CLEF_VENVS_DIR` | optional, default `<repo>/.venvs` |
 
 `~` and `*` are expanded, and each pattern must match exactly one path. A mount point whose name changes between boots can be written as `/media/<user>/*/...`. The values in `.env.example` are examples from one machine; replace them.
@@ -95,6 +96,25 @@ PY
 ```
 
 Expect 10–20 minutes on a 16 GB laptop, most of it loading MedCAT (less with enough RAM to avoid swap). Passing the ground truth itself as `--submission` should give ~1.0 for every metric.
+
+#### ROCOv2 responses
+
+`--dataset rocov2` evaluates against the ROCOv2 validation split (9,904 IDs, [eltorio/ROCOv2-radiology](https://huggingface.co/datasets/eltorio/ROCOv2-radiology) at a pinned revision). `--submission` can be the response JSONL directly (one `{"image_id", "generated_caption", ...}` per line):
+
+```sh
+.venvs/main/bin/python caption_prediction/run_evaluation.py --dataset rocov2 --submission responses/responses.jsonl --output scores.json
+```
+
+One command runs every stage, and each prints the script it runs (`==> <script>: ...`), so a failure names the script that failed:
+
+1. `unpack_rocov2.py`, only if `CLEF_ROCOV2_DIR` is incomplete (the image count in `validation/` differs from the rows of `validation/validation_metadata.csv`). It downloads the validation parquet files (~2.6 GB, into the HF cache under `CLEF_ARTIFACTS_DIR`) and writes `validation/<ID>.<ext>` (raw bytes, PNG for this dataset) plus `validation_metadata.csv` (`image_id,caption,cui`). An existing unpack in this layout with JPEGs works too, since images are found by ID, whatever their extension.
+2. `convert_responses.py`: JSONL to `<jsonl name>.csv` next to it (`ID,Caption`, ground-truth order, newlines in captions collapsed). It fails if IDs are missing, duplicated or unknown.
+3. `submission_check.py`: the format check, then a sanity check that every ID has an image file, a ground-truth caption and a predicted caption. `--verify-images` also fully decodes every image (~1.5 min more on CPU for the 9,904 images). Any finding prints a summary by category:
+   - missing image, undecodable image or empty predicted caption: the run **stops**;
+   - empty ground-truth caption (ROCOv2 has one, `ROCOv2_2023_valid_003902`, empty in the source dataset): that ID is **excluded** from scoring and the run continues. The evaluator gets `<submission>.scored.csv` without it, and the `--output` JSON records `n_scored` and `excluded` (ID and reason).
+4. Embeddings and scoring, as for the other datasets.
+
+`--check-only` stops after step 3, so the data and the submission can be checked on a machine without a GPU.
 
 ### Troubleshooting
 

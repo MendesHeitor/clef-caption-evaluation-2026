@@ -145,6 +145,65 @@ def check_submission(
         raise SubmissionFormatError(f"CSV parsing error: {str(e)}")
 
 
+# Sanity-check categories: (key, label, stops the run)
+TRIPLE_CHECKS = [
+    ("missing_image", "missing image file", True),
+    ("corrupt_image", "image does not decode", True),
+    ("empty_prediction", "empty predicted caption", True),
+    ("empty_gt", "empty ground-truth caption (excluded from scoring)", False),
+]
+
+
+def check_triples(
+    gt: dict, submission_path: str, image_index: dict, verify_images: bool = False
+) -> dict:
+    """Check every GT ID for an image file, a GT caption and a predicted caption.
+
+    image_index maps ID -> image path (any extension). With verify_images,
+    each image is also fully decoded. Returns {category: {ID: detail}} for the
+    categories in TRIPLE_CHECKS; an ID can appear in several.
+    """
+    with open(submission_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)  # header, validated by check_submission
+        predictions = {row[0]: row[1] for row in reader if len(row) == 2}
+
+    if verify_images:
+        from PIL import Image
+        from tqdm import tqdm
+
+    found = {key: {} for key, _, _ in TRIPLE_CHECKS}
+    ids = tqdm(gt, desc="Decoding images") if verify_images else gt
+    for image_id in ids:
+        path = image_index.get(image_id)
+        if path is None:
+            found["missing_image"][image_id] = "no image file"
+        elif verify_images:
+            try:
+                with Image.open(path) as img:
+                    img.load()
+            except Exception as e:
+                found["corrupt_image"][image_id] = f"{type(e).__name__}: {e}"
+        if not gt[image_id].strip():
+            found["empty_gt"][image_id] = f"caption is {gt[image_id]!r}"
+        if not predictions.get(image_id, "").strip():
+            found["empty_prediction"][image_id] = "empty"
+    return found
+
+
+def format_triple_summary(found: dict, n_ids: int, shown: int = 10) -> str:
+    lines = [f"Sanity check summary ({n_ids} IDs):"]
+    for key, label, stops in TRIPLE_CHECKS:
+        hits = found[key]
+        action = "STOPS the run" if stops else "continues"
+        lines.append(f"  {label}: {len(hits)}" + (f"  -> {action}" if hits else ""))
+        for image_id, detail in list(hits.items())[:shown]:
+            lines.append(f"    - {image_id}: {detail}")
+        if len(hits) > shown:
+            lines.append(f"    ... and {len(hits) - shown} more")
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Validate caption submission.csv format without Docker."

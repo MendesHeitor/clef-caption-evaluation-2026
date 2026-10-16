@@ -44,12 +44,14 @@ def encode_batch(image_paths: List[str], scorer: MedImageInsight):
 def encode_images(
     image_ids: List[str], image_dir: str, scorer: MedImageInsight, batch_size: int = 32
 ):
+    index = config.image_index(image_dir)  # ID -> file, any image extension
+    absent = [i for i in image_ids if i not in index]
+    if absent:
+        raise FileNotFoundError(f"No image file for {len(absent)} IDs in {image_dir}, e.g. {absent[:3]}")
     embeddings = {}
     for start in tqdm(range(0, len(image_ids), batch_size), desc="Encoding images"):
         batch_ids = image_ids[start : start + batch_size]
-        batch_paths = [
-            os.path.join(image_dir, image_id + ".jpg") for image_id in batch_ids
-        ]
+        batch_paths = [index[image_id] for image_id in batch_ids]
         image_vecs = encode_batch(batch_paths, scorer)
         for image_id, vec in zip(batch_ids, image_vecs):
             embeddings[image_id] = vec
@@ -61,7 +63,7 @@ def main():
         description="Precompute image embeddings for the ground-truth IDs of a dataset. "
         "Incremental: only IDs missing from the cache are encoded."
     )
-    parser.add_argument("--dataset", choices=sorted(config.DATASETS), required=True)
+    parser.add_argument("--dataset", choices=config.DATASET_CHOICES, required=True)
     parser.add_argument(
         "--gt", help="Ground-truth CSV overriding the dataset's valid rows."
     )
@@ -95,7 +97,7 @@ def main():
     print(f"MedImageInsight device: {device}")
 
     print(f"Encoding {len(missing)} images for {args.dataset}...")
-    image_dir = os.path.join(config.dataset_dir(args.dataset), "images")
+    image_dir = config.image_dir(args.dataset)
     embeddings.update(encode_images(missing, image_dir, scorer))
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     np.savez(cache_path, **embeddings)
